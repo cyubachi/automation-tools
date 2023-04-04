@@ -1,0 +1,117 @@
+diff --git a/.gitignore b/.gitignore
+index ca5e3f2..9e22291 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,2 +1,3 @@
+ venv/
+-.idea/
+\ No newline at end of file
++.idea/
++gh_token
+\ No newline at end of file
+diff --git a/create_pr/Dockerfile b/create_pr/Dockerfile
+index e69de29..604e774 100644
+--- a/create_pr/Dockerfile
++++ b/create_pr/Dockerfile
+@@ -0,0 +1,8 @@
++FROM python:3.10-slim
++
++RUN apt-get update && apt-get install -y git
++WORKDIR /work
++ADD create_pr.py .
++RUN chmod +x create_pr.py
++
++ENTRYPOINT ["/work/create_pr.py"]
+\ No newline at end of file
+diff --git a/create_pr/create_pr.py b/create_pr/create_pr.py
+index d33bf5a..c6b557e 100644
+--- a/create_pr/create_pr.py
++++ b/create_pr/create_pr.py
+@@ -7,6 +7,7 @@ import subprocess
+ from urllib.request import Request, urlopen
+ 
+ GITHUB_USER = os.getenv('GITHUB_USER')
++GITHUB_EMAIL = os.getenv('GITHUB_EMAIL')
+ GITHUB_TOKEN = os.getenv('GITHUB_TOKEN')
+ GITHUB_HOST = os.getenv('GITHUB_HOST', 'github.com')
+ 
+@@ -27,15 +28,16 @@ def _parse_arguments():
+     parser.add_argument('-r', '--repository', metavar='REPOSITORY', required=True, help='repository name')
+     parser.add_argument('-c', '--commit-message', metavar='COMMIT_MESSAGE', required=True,
+                         help='commit message when creating a branch and commiting a diff')
+-    parser.add_argument('-b', '--branch-name', metavar='BRANCH_NAME', default='main', required=False,
++    parser.add_argument('-b', '--base-branch', metavar='BASE_BRANCH', default='main', required=False,
+                         help='base branch name')
+-    parser.add_argument('--base-branch', metavar='HEAD_BRANCH', required=True, help='head branch name')
++    parser.add_argument('--head-branch', metavar='HEAD_BRANCH', required=True, help='head branch name')
++    parser.add_argument("--input-diff-file", type=argparse.FileType("r"), default="-")
+     return parser.parse_args()
+ 
+ 
+ def _clone_repository(organization, repository):
+     """
+-    clone repository and change directory.
++    clone repository.
+ 
+     :param organization:
+     :param repository:
+@@ -43,7 +45,6 @@ def _clone_repository(organization, repository):
+     """
+     clone_url = f'https://{GITHUB_USER}:{GITHUB_TOKEN}@{GITHUB_HOST}/{organization}/{repository}'
+     subprocess.run(['git', 'clone', clone_url])
+-    os.chdir(f'./{repository}')
+ 
+ 
+ def _create_local_branch(head_branch):
+@@ -56,14 +57,16 @@ def _create_local_branch(head_branch):
+     subprocess.run(['git', 'checkout', '-b', head_branch])
+ 
+ 
+-def _apply_patch(patch_text):
++def _apply_patch(patch):
+     """
+     apply patch,
+ 
+-    :param patch_text:
++    :param patch:
+     :return:
+     """
+-    subprocess.run('echo "eee" > test.text', shell=True)
++    with open('diff.patch', 'w') as patch_file:
++        patch_file.write(patch)
++    subprocess.run(['git', 'apply', 'diff.patch'])
+ 
+ 
+ def _commit_and_push_changes(head_branch, commit_message):
+@@ -75,7 +78,7 @@ def _commit_and_push_changes(head_branch, commit_message):
+     :return:
+     """
+     subprocess.run(['git', 'add', '.'])
+-    subprocess.run(['git', 'commit', '-m', commit_message])
++    subprocess.run(['git', '-c', f'user.name="{GITHUB_USER}"', '-c', f'user.email="{GITHUB_EMAIL}"', 'commit',  '-m', commit_message])
+     subprocess.run(['git', 'push', 'origin', head_branch])
+ 
+ 
+@@ -111,16 +114,18 @@ def _create_pull_request(organization, repository, base_branch, head_branch) ->
+ if __name__ == '__main__':
+     # parse args
+     args = _parse_arguments()
+-    # change directory to /tmp
+-    os.chdir('/tmp')
+     # remove already exists directory
+-    shutil.rmtree(args.repository)
++    if os.path.exists(args.repository):
++        shutil.rmtree(args.repository)
+     # clone target repository
+     _clone_repository(args.organization, args.repository)
++    # change directory to clone repository directory.
++    os.chdir(f'./{args.repository}')
+     # create local branch
+     _create_local_branch(args.head_branch)
+     # apply patch
+-    _apply_patch('patch_text')
++    patch_text = args.input_diff_file.read()
++    _apply_patch(patch_text)
+     # commit and push diff
+     _commit_and_push_changes(args.head_branch, args.commit_message)
+     # create pull request
